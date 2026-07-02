@@ -1,4 +1,6 @@
 def show(body):
+    body = body.replace("&lt;", "<").replace("&gt;", ">")
+    
     in_tag = False
     for c in body:
         if c == "<":
