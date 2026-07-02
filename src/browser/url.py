@@ -26,10 +26,6 @@ class URL:
             self.host, port = self.host.split(":", 1)
             self.port = int(port)
 
-        # ADD THESE LINES TO DEBUG:
-        print(f"DEBUG HOST: '{self.host}'")
-        print(f"DEBUG PORT: {self.port}")
-
     def request(self):
         s = socket.socket(
             family=socket.AF_INET,
@@ -52,8 +48,18 @@ class URL:
         s.connect((self.host, self.port))
         #  you need to tell it to connect to the other computer
 
-        request = "GET {} HTTP/1.0\r\n".format(self.path)
-        request += "Host: {}\r\n".format(self.host)
+        # Use a dictionary to manage request headers
+        request_headers = {
+            "Host": self.host,
+            "Connection": "close",
+            "User-Agent": "fouaden Browser",
+        }
+
+        request = f"GET {self.path} HTTP/1.1\r\n"
+
+        # Loop through the dictionary to cleanly build the headers string
+        for header, value in request_headers.items():
+            request += f"{header}: {value}\r\n"
         request += "\r\n"
         s.send(request.encode("utf8"))
 
