@@ -1,1 +1,17 @@
-3.13
+[project]
+name = "browser-eng"
+version = "0.1.0"
+description = "Building a Browser"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+[project.scripts]
+browser = "browser.main:main"
+
+[build-system]
+requires = ["setuptools>=61.0.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

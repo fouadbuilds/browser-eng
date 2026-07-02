@@ -1,4 +1,4 @@
-def show(body):
+def lex(body):
     body = body.replace("&lt;", "<").replace("&gt;", ">")
     
     in_tag = False

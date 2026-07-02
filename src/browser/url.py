@@ -1,13 +1,20 @@
 import os
 import socket
 import ssl
+import time
 
-#  Global cache to preserve open persistent sockets ---
-# Key: (host, port) -> Value: socket object
+# Persistent socket connections (Exercise 1.6)
 SOCKET_CACHE = {}
+
+# --- EXERCISE 1.8: Global Memory Cache ---
+# Structure: { url_string: (expiration_timestamp, headers_dict, body_string) }
+HTTP_CACHE = {}
 
 class URL:
     def __init__(self, url):
+        # We store the raw URL string to use as our unique cache key
+        self.raw_url = url if url else "file://test.html"
+
         if not url:
             self.scheme = "file"
             self.path = os.path.abspath("test.html")
@@ -63,7 +70,20 @@ class URL:
             return fake_headers, f"<html><body><h1>404 File Not Found</h1></body></html>"
 
     def _request_network(self):
-        """Manages Keep-Alive persistent connections cleanly using raw byte lengths."""
+        """Fetches network data with Keep-Alive and Cache-Control handling."""
+        current_time = time.time()
+
+        # --- EXERCISE 1.8: Check Cache Before Network Hit ---
+        if self.raw_url in HTTP_CACHE:
+            expire_time, cached_headers, cached_body = HTTP_CACHE[self.raw_url]
+            if current_time < expire_time:
+                print(f"⚡ [CACHE HIT] Serving fresh local copy for: {self.raw_url}")
+                return cached_headers, cached_body
+            else:
+                print(f"[CACHE EXPIRED] Stale data found for: {self.raw_url}. Re-fetching...")
+                del HTTP_CACHE[self.raw_url]
+
+        # Manage Keep-Alive persistent sockets
         socket_key = (self.host, self.port)
         s = None
 
@@ -84,11 +104,7 @@ class URL:
                     s.setblocking(True)
 
         if s is None:
-            s = socket.socket(
-                family=socket.AF_INET,
-                type=socket.SOCK_STREAM,
-                proto=socket.IPPROTO_TCP,
-            )
+            s = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP)
             if self.scheme == "https":
                 ctx = ssl.create_default_context()
                 s = ctx.wrap_socket(s, server_hostname=self.host)
@@ -117,10 +133,7 @@ class URL:
             SOCKET_CACHE[socket_key] = s
             s.send(request.encode("utf8"))
 
-        # --- FIX: Read the stream as raw binary ("rb") to prevent text-decoding stalls ---
         response = s.makefile("rb")
-        
-        # Read headers as bytes and decode individually
         statusline = response.readline().decode("utf8")
         version, status, explanation = statusline.split(" ", 2)
         
@@ -129,19 +142,47 @@ class URL:
             line = response.readline().decode("utf8")
             if line in ["\r\n", "\n"]:
                 break
+            if ":" not in line:
+                continue
             header, value = line.split(":", 1)
             response_headers[header.casefold()] = value.strip()
 
-        # Read only the explicit bytes specified by the server
         if "content-length" in response_headers:
             length = int(response_headers["content-length"])
             content_bytes = response.read(length)
         else:
-            # Drop socket out of cache and read to EOF if Content-Length is missing
             content_bytes = response.read()
             s.close()
             if socket_key in SOCKET_CACHE:
                 del SOCKET_CACHE[socket_key]
 
         content = content_bytes.decode("utf8")
+
+        # --- EXERCISE 1.8: Evaluate Cache-Control Headers ---
+        # Rule 1: Must be HTTP 200 OK success
+        if status == "200":
+            cache_control = response_headers.get("cache-control", "").lower()
+            
+            # Rule 2: If 'no-store' is specified, do not cache
+            if "no-store" not in cache_control:
+                max_age = 0
+                has_max_age = False
+                
+                # Rule 3: Parse out max-age parameter value
+                if "max-age" in cache_control:
+                    for part in cache_control.split(","):
+                        part = part.strip()
+                        if part.startswith("max-age="):
+                            try:
+                                max_age = int(part.split("=")[1])
+                                has_max_age = True
+                            except ValueError:
+                                pass
+
+                # If the server provides a max-age value, commit it to memory
+                if has_max_age and max_age > 0:
+                    expiration_timestamp = current_time + max_age
+                    HTTP_CACHE[self.raw_url] = (expiration_timestamp, response_headers, content)
+                    print(f"[CACHE STORED] Cached resource for {max_age}s: {self.raw_url}")
+
         return response_headers, content
