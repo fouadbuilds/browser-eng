@@ -63,29 +63,26 @@ class URL:
             return fake_headers, f"<html><body><h1>404 File Not Found</h1></body></html>"
 
     def _request_network(self):
-        """Manages Keep-Alive persistent connection sockets."""
+        """Manages Keep-Alive persistent connections cleanly using raw byte lengths."""
         socket_key = (self.host, self.port)
         s = None
 
-        # Check if we have an existing, open socket to this host
         if socket_key in SOCKET_CACHE:
             s = SOCKET_CACHE[socket_key]
-            # Verify the socket is still healthy by doing a non-blocking peek
             try:
                 s.setblocking(False)
                 peek = s.recv(1, socket.MSG_PEEK)
-                if peek == b"": # Connection was closed by server
+                if peek == b"": 
                     s.close()
                     s = None
             except BlockingIOError:
-                pass # Socket is open and silent, perfect
+                pass 
             except Exception:
                 s = None
             finally:
                 if s:
                     s.setblocking(True)
 
-        # If no cached socket exists or it was broken, establish a fresh connection
         if s is None:
             s = socket.socket(
                 family=socket.AF_INET,
@@ -96,10 +93,8 @@ class URL:
                 ctx = ssl.create_default_context()
                 s = ctx.wrap_socket(s, server_hostname=self.host)
             s.connect((self.host, self.port))
-            # Cache it immediately for future runs
             SOCKET_CACHE[socket_key] = s
 
-        # Build request headers (Notice Connection is now keep-alive)
         request_headers = {
             "Host": self.host,
             "Connection": "keep-alive",
@@ -114,7 +109,6 @@ class URL:
         try:
             s.send(request.encode("utf8"))
         except Exception:
-            # If the cached socket fails unexpectedly on send, rebuild it once
             s = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP)
             if self.scheme == "https":
                 ctx = ssl.create_default_context()
@@ -123,28 +117,31 @@ class URL:
             SOCKET_CACHE[socket_key] = s
             s.send(request.encode("utf8"))
 
-        # Process the stream safely
-        response = s.makefile("r", encoding="utf8", newline="\r\n")
-        statusline = response.readline()
+        # --- FIX: Read the stream as raw binary ("rb") to prevent text-decoding stalls ---
+        response = s.makefile("rb")
+        
+        # Read headers as bytes and decode individually
+        statusline = response.readline().decode("utf8")
         version, status, explanation = statusline.split(" ", 2)
         
         response_headers = {}
         while True:
-            line = response.readline()
+            line = response.readline().decode("utf8")
             if line in ["\r\n", "\n"]:
                 break
             header, value = line.split(":", 1)
             response_headers[header.casefold()] = value.strip()
 
-        # CRITICAL: Read ONLY the exact number of bytes specified by Content-Length
+        # Read only the explicit bytes specified by the server
         if "content-length" in response_headers:
             length = int(response_headers["content-length"])
-            content = response.read(length)
+            content_bytes = response.read(length)
         else:
-            # Fallback if server doesn't provide it (forces socket close to read EOF)
-            content = response.read()
+            # Drop socket out of cache and read to EOF if Content-Length is missing
+            content_bytes = response.read()
             s.close()
             if socket_key in SOCKET_CACHE:
                 del SOCKET_CACHE[socket_key]
 
+        content = content_bytes.decode("utf8")
         return response_headers, content
