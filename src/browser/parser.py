@@ -1,5 +1,7 @@
+
 def lex(body):
-    body = body.replace("&lt;", "<").replace("&gt;", ">")
+    text = ""
+    # body = body.repla ce("&lt;", "<").replace("&gt;", ">")
     
     in_tag = False
     for c in body:
@@ -8,4 +10,5 @@ def lex(body):
         elif c == ">":
             in_tag = False
         elif not in_tag:
-            print(c, end="")
+            text += c
+    return text
